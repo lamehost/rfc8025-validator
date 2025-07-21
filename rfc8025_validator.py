@@ -6,9 +6,9 @@ A Python script to validate geolocation data formatted as a geofeed according to
 
 import csv
 import sys
-from collections.abc import Generator, Iterable
+from collections.abc import Generator
 from ipaddress import ip_network
-from typing import IO, NotRequired, TypedDict
+from typing import IO, TypedDict
 
 
 class GeoRecord(TypedDict):
@@ -21,7 +21,6 @@ class GeoRecord(TypedDict):
     region: str
     city: str
     zip: str
-    _error: NotRequired[str | None]
 
 
 def read_ip2location_data(
@@ -63,54 +62,44 @@ def read_geolocation_data(stream: IO) -> Generator[GeoRecord]:
     Generator[Record]: Geolocation records
     """
     for row in csv.reader(stream):
+        if len(row) != 5:
+            row = ",".join(row)
+            raise ValueError(f"Malformatted record: {row}")
+
         record = dict(zip(["prefix", "country", "region", "city", "zip"], row))
-        yield GeoRecord(record)
+        yield GeoRecord(**record)
 
 
-def validate(
-    geolocation_records: Iterable[GeoRecord], iso3166_2: dict[str, set[str]]
-) -> Generator[GeoRecord]:
+def validate(record: GeoRecord, iso3166_2: dict[str, set[str]]) -> None:
     """
-    Validate `gelocation_data` against `ip2location_data`.
+    Raises ValuError if `record` cannot be validated against `ip2location_data`.
 
     Arguments:
     ----------
-    gelocation_records: Iterable[GeoRecords]
-        Geolocation records
+    gelocation_records: GeoRecords
+        Geolocation record
     iso3166_2: dict[str, set[str]]
         ISO3166-2 data serialized as dict. Country code as keys, sets of regions codes as values
-
-    Yields:
-    -------
-    Generator[GeoRecord]: Malformed GeoRecords
     """
-    for record in geolocation_records:
+    try:
+        ip_network(record["prefix"])
+    except ValueError as error:
+        raise ValueError("Invalid prefix") from error
+
+    if record["country"]:
         try:
-            ip_network(record["prefix"])
-        except ValueError:
-            record["_error"] = "Invalid prefix"
-            yield record
-            continue
+            iso3166_2[record["country"]]
+        except KeyError as error:
+            raise ValueError("Wrong country code") from error
 
+    if record["region"]:
         if record["country"]:
-            try:
-                iso3166_2[record["country"]]
-            except KeyError:
-                record["_error"] = "Wrong country code"
-                yield record
-                continue
+            regions = iso3166_2[record["country"]]
+        else:
+            regions = [region for _regions in iso3166_2.values() for region in _regions]
 
-        if record["region"]:
-            if record["country"]:
-                regions = iso3166_2[record["country"]]
-            else:
-                regions = [
-                    region for _regions in iso3166_2.values() for region in _regions
-                ]
-
-            if record["region"] not in regions:
-                record["_error"] = "Wrong region code"
-                yield record
+        if record["region"] not in regions:
+            raise ValueError("Wrong region code")
 
 
 def main():
@@ -122,14 +111,28 @@ def main():
     geolocation_data = read_geolocation_data(sys.stdin)
     ip2location_data = read_ip2location_data()
 
-    malformed_records = validate(geolocation_data, ip2location_data)
+    exit_code = 0
+    try:
+        for record in geolocation_data:
+            try:
+                validate(record, ip2location_data)
+            except ValueError as error:
+                # Error raised by the validator
+                print(
+                    f"{error}: "
+                    f"{record['prefix']},{record['country']},{record['region']},"
+                    f"{record['city']},{record['zip']}"
+                )
+                exit_code = 1
+    except ValueError as error:
+        # Error raised by the CSV parser
+        print(error)
+        exit_code = 1
+    finally:
+        sys.stdout.flush()
 
-    for record in malformed_records:
-        print(
-            f"{record['_error']}: "
-            f"{record['prefix']},{record['country']},{record['region']},"
-            f"{record['city']},{record['zip']}"
-        )
+    if exit_code:
+        sys.exit(exit_code)
 
 
 if __name__ == "__main__":
