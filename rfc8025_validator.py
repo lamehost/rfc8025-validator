@@ -102,6 +102,28 @@ def validate(record: GeoRecord, iso3166_2: dict[str, set[str]]) -> None:
             raise ValueError("Wrong region code")
 
 
+def format_validation_error(record: GeoRecord, error: Exception) -> str:
+    """
+    Returns nicely formatted validation errors.
+
+    Arguments:
+    ---------
+    record: GeoRecord
+        Geolocation record
+    error: Exception
+        The exception raised by validate
+
+    Returns:
+    -------
+    str: The formatted error message
+    """
+    return (
+        f"{error}: "
+        f"{record['prefix']},{record['country']},{record['region']},"
+        f"{record['city']},{record['zip']}"
+    )
+
+
 def main():
     """
     Main entrypoint for the script.
@@ -118,11 +140,7 @@ def main():
                 validate(record, ip2location_data)
             except ValueError as error:
                 # Error raised by the validator
-                print(
-                    f"{error}: "
-                    f"{record['prefix']},{record['country']},{record['region']},"
-                    f"{record['city']},{record['zip']}"
-                )
+                print(format_validation_error(record, error))
                 exit_code = 1
     except ValueError as error:
         # Error raised by the CSV parser
